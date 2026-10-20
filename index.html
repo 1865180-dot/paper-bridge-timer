@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ペーパーブリッジ・タイマー</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@600;800&family=Zen+Kaku+Gothic+New:wght@500;700;900&display=swap">
+<style>
+/* Layout: race timing board — big phase clock on the left, battery tally on the right, start lights on top */
+:root {
+  --bg: #111316;
+  --panel: #1a1d22;
+  --line: #2b3038;
+  --fg: #eef0f2;
+  --muted: #8a919c;
+  --red: #e5232b;
+  --amber: #ffb21a;
+  --green: #22d36f;
+  --font-num: "Saira Condensed", "Arial Narrow", sans-serif;
+  --font-jp: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-jp); font-size: 15px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 16px 24px;
+}
+.wrap { max-width: 1200px; margin: 0 auto; display: grid; gap: 16px; }
+
+header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+h1 { margin: 0; font-size: 1.25rem; font-weight: 900; letter-spacing: .04em; display: flex; align-items: center; gap: 10px; }
+h1 .flag { width: 28px; height: 20px; border-radius: 2px;
+  background: conic-gradient(var(--fg) 25%, var(--bg) 0 50%, var(--fg) 0 75%, var(--bg) 0) 0 0 / 10px 10px; }
+.keys { color: var(--muted); font-size: .8rem; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+kbd { font-family: var(--font-num); border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; color: var(--fg); }
+
+/* Start lights */
+.lights { display: flex; justify-content: center; gap: clamp(8px, 2vw, 18px); padding: 14px; background: #0a0b0d; border: 1px solid var(--line); border-radius: 10px; }
+.light { width: clamp(30px, 6vw, 54px); aspect-ratio: 1; border-radius: 50%; background: #2a0c0e; box-shadow: inset 0 0 0 3px #000; transition: background .08s, box-shadow .08s; }
+.light.on { background: var(--red); box-shadow: inset 0 0 0 3px #000, 0 0 22px 4px rgba(229,35,43,.65); }
+.light.go { background: var(--green); box-shadow: inset 0 0 0 3px #000, 0 0 22px 4px rgba(34,211,111,.55); }
+
+.board { display: grid; grid-template-columns: 1.5fr 1fr; gap: 16px; }
+@media (max-width: 860px) { .board { grid-template-columns: 1fr; } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; min-width: 0; }
+
+/* Phase clock */
+.clock { display: grid; gap: 10px; position: relative; overflow: hidden; }
+.clock::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 8px; background: var(--phase, var(--muted)); }
+.lap { font-family: var(--font-num); font-size: 1.3rem; color: var(--muted); letter-spacing: .06em; }
+.lap b { color: var(--fg); font-size: 1.6rem; }
+.phase { font-size: clamp(2rem, 5.5vw, 3.6rem); font-weight: 900; color: var(--phase, var(--fg)); line-height: 1.1; }
+.time { font-family: var(--font-num); font-weight: 800; font-size: clamp(6rem, 22vw, 15rem); line-height: .85; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.time small { font-size: .38em; color: var(--muted); margin-left: .1em; }
+.bar { height: 14px; background: var(--line); border-radius: 7px; overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--phase, var(--muted)); }
+.next { color: var(--muted); font-size: .9rem; }
+
+/* Count */
+.count { display: grid; gap: 12px; align-content: start; }
+.count h2 { margin: 0; font-size: 1rem; color: var(--muted); font-weight: 700; letter-spacing: .08em; }
+.num { font-family: var(--font-num); font-weight: 800; font-size: clamp(6rem, 18vw, 11rem); line-height: .85; color: var(--amber); font-variant-numeric: tabular-nums; }
+.num small { font-family: var(--font-jp); font-size: .22em; color: var(--fg); margin-left: .15em; }
+.adjust { display: flex; gap: 8px; }
+.batteries { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; }
+.bat { width: 14px; height: 28px; border-radius: 3px; background: linear-gradient(var(--fg) 0 18%, #2f3540 18% 100%); position: relative; }
+.bat::before { content: ""; position: absolute; top: -4px; left: 4px; width: 6px; height: 4px; border-radius: 1px 1px 0 0; background: var(--fg); }
+.bat.new { animation: pop .4s ease-out; }
+@keyframes pop { from { transform: translateY(-14px) scale(1.3); } }
+.best { color: var(--muted); font-size: .9rem; }
+.best b { font-family: var(--font-num); color: var(--fg); font-size: 1.2rem; }
+
+/* Controls */
+.controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+button { font-family: var(--font-jp); font-weight: 700; font-size: 1rem; border-radius: 8px; border: 1px solid var(--line); background: #262a31; color: var(--fg); padding: 12px 20px; cursor: pointer; }
+button:hover { background: #30353e; }
+button:focus-visible, input:focus-visible { outline: 3px solid var(--amber); outline-offset: 2px; }
+button:disabled { opacity: .4; cursor: default; }
+.go { background: var(--green); color: #06210f; border-color: transparent; font-size: 1.15rem; padding: 14px 30px; }
+.go:hover { background: #3be083; }
+.crash { background: var(--red); color: #fff; border-color: transparent; font-size: 1.15rem; padding: 14px 30px; }
+.crash:hover { background: #f23a41; }
+.small { padding: 8px 14px; font-size: .95rem; }
+.spacer { flex: 1; }
+.settings { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; color: var(--muted); font-size: .9rem; }
+.settings label { display: flex; align-items: center; gap: 6px; }
+.settings input[type=number] { width: 4.2em; font-family: var(--font-num); font-size: 1.1rem; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+.settings input[type=range] { width: 110px; accent-color: var(--amber); }
+
+/* Result */
+.result { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(8,9,11,.88); z-index: 20; padding: 16px; }
+.result .card { text-align: center; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 28px 36px; display: grid; gap: 10px; max-width: 100%; }
+.result .checker { height: 22px; border-radius: 3px; background: conic-gradient(var(--fg) 25%, var(--panel) 0 50%, var(--fg) 0 75%, var(--panel) 0) 0 0 / 22px 22px; }
+.result .label { font-size: 1.3rem; font-weight: 900; }
+.result .big { font-family: var(--font-num); font-weight: 800; font-size: clamp(7rem, 26vw, 14rem); line-height: .9; color: var(--amber); }
+.result .big small { font-family: var(--font-jp); font-size: .2em; color: var(--fg); }
+@media (prefers-reduced-motion: reduce) { .bat.new { animation: none; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <h1><span class="flag" aria-hidden="true"></span>ペーパーブリッジ・タイマー</h1>
+    <div class="keys"><span><kbd>Space</kbd> スタート／一時停止</span><span><kbd>Enter</kbd> 崩壊</span><span><kbd>R</kbd> リセット</span><span><kbd>M</kbd> BGM</span></div>
+  </header>
+
+  <div class="lights" aria-label="スタートシグナル">
+    <span class="light"></span><span class="light"></span><span class="light"></span><span class="light"></span><span class="light"></span>
+  </div>
+
+  <div class="board">
+    <section class="panel clock" id="clock">
+      <div class="lap" id="lap">LAP <b>1</b> 本目の電池</div>
+      <div class="phase" id="phase">スタンバイ</div>
+      <div class="time" id="time">5.0<small>s</small></div>
+      <div class="bar"><i id="bar"></i></div>
+      <div class="next" id="next">スタートでシグナルが点灯し、消えたら開始します</div>
+    </section>
+
+    <section class="panel count">
+      <h2>耐えた電池</h2>
+      <div class="num" id="num">0<small>本</small></div>
+      <div class="batteries" id="bats" aria-hidden="true"></div>
+      <div class="adjust">
+        <button class="small" id="minus" aria-label="1本減らす">−1</button>
+        <button class="small" id="plus" aria-label="1本増やす">＋1</button>
+      </div>
+      <div class="best">このページの最高記録 <b id="best">—</b></div>
+    </section>
+  </div>
+
+  <div class="controls">
+    <button class="go" id="start">スタート</button>
+    <button class="crash" id="crash" disabled>崩壊！</button>
+    <button id="reset">リセット</button>
+    <span class="spacer"></span>
+    <div class="settings">
+      <label>電池を入れる <input type="number" id="placeSec" min="1" max="60" step="1" value="5"> 秒</label>
+      <label>耐える <input type="number" id="holdSec" min="1" max="60" step="1" value="3"> 秒</label>
+      <label><input type="checkbox" id="bgmOn" checked> BGM</label>
+      <label>音量 <input type="range" id="vol" min="0" max="100" value="70"></label>
+    </div>
+  </div>
+</div>
+
+<div class="result" id="result" hidden>
+  <div class="card">
+    <div class="checker"></div>
+    <div class="label" id="resultLabel">記録</div>
+    <div class="big" id="resultNum">0<small>本</small></div>
+    <button class="go" id="again">次のチームへ</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const lights = [...document.querySelectorAll('.light')];
+  const COLORS = { place: 'var(--amber)', hold: 'var(--green)', idle: 'var(--muted)', done: 'var(--red)' };
+
+  const S = { mode: 'idle', phase: 'place', phaseStart: 0, phaseDur: 5, count: 0, remain: 0,
+              lastTick: 0, lightsStart: 0, lightsOutAt: 0, litShown: 0, best: 0 };
+  const placeSec = () => Math.max(1, +$('placeSec').value || 5);
+  const holdSec  = () => Math.max(1, +$('holdSec').value || 3);
+
+  /* ---------- Audio ---------- */
+  let ctx, master, bgmGain, sfxGain, noiseBuf, schedTimer = null, nextStepTime = 0, step = 0;
+  const STEP = 60 / 150 / 4; // 16th note at 150 BPM
+  const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
+
+  function initAudio() {
+    if (ctx) { ctx.resume(); return; }
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    master = ctx.createGain(); master.gain.value = $('vol').value / 100; master.connect(ctx.destination);
+    bgmGain = ctx.createGain(); bgmGain.gain.value = 0.55; bgmGain.connect(master);
+    sfxGain = ctx.createGain(); sfxGain.gain.value = 0.9; sfxGain.connect(master);
+    noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+    const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+
+  function tone(freq, t, dur, { type = 'square', vol = .3, dest = sfxGain, filter = 0, slideTo = 0 } = {}) {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    let node = o;
+    if (filter) { const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = filter; o.connect(f); node = f; }
+    node.connect(g); g.connect(dest); o.start(t); o.stop(t + dur + .02);
+  }
+  function noise(t, dur, { vol = .2, hp = 6000, dest = bgmGain } = {}) {
+    const s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    s.buffer = noiseBuf; f.type = 'highpass'; f.frequency.value = hp;
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    s.connect(f); f.connect(g); g.connect(dest); s.start(t); s.stop(t + dur + .02);
+  }
+  function kick(t) {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(42, t + .14);
+    g.gain.setValueAtTime(.9, t); g.gain.exponentialRampToValueAtTime(0.0001, t + .22);
+    o.connect(g); g.connect(bgmGain); o.start(t); o.stop(t + .25);
+  }
+
+  // Original driving race loop: Am – F – C – G
+  const CHORDS = [[45, [0, 3, 7]], [41, [0, 4, 7]], [48, [0, 4, 7]], [43, [0, 4, 7]]];
+  const ARP = [0, 1, 2, 3, 2, 1, 2, 3];
+  function playStep(n, t) {
+    const bar = Math.floor(n / 16) % 4, s = n % 16, [root, iv] = CHORDS[bar];
+    const intense = S.phase === 'hold';
+    // bass: pumping octaves
+    tone(mtof(root + (s % 2 ? 12 : 0)), t, STEP * .9, { type: 'sawtooth', vol: .22, dest: bgmGain, filter: intense ? 1600 : 900 });
+    // drums
+    if (s % 4 === 0) kick(t);
+    if (s === 4 || s === 12) noise(t, .16, { vol: .35, hp: 1500 });
+    noise(t, s % 4 === 2 ? .09 : .03, { vol: s % 2 ? .06 : .1, hp: 8000 });
+    if (intense && s % 2 === 1) noise(t, .03, { vol: .07, hp: 9000 });
+    // lead arpeggio on 8ths
+    if (s % 2 === 0) {
+      const k = ARP[s / 2], note = root + 24 + (k === 3 ? 12 : iv[k]);
+      tone(mtof(note), t, STEP * 1.7, { type: 'square', vol: .07, dest: bgmGain, filter: 3200 });
+    }
+    // rising sweep at the end of the 4-bar loop
+    if (bar === 3 && s === 12) tone(mtof(root + 24), t, STEP * 4, { type: 'sawtooth', vol: .05, dest: bgmGain, filter: 2500, slideTo: mtof(root + 36) });
+  }
+  function startBgm() {
+    if (!$('bgmOn').checked || schedTimer) return;
+    nextStepTime = ctx.currentTime + .05;
+    schedTimer = setInterval(() => {
+      while (nextStepTime < ctx.currentTime + .12) { playStep(step++, nextStepTime); nextStepTime += STEP; }
+    }, 25);
+  }
+  function stopBgm() { clearInterval(schedTimer); schedTimer = null; }
+
+  const sfx = {
+    light: () => ctx && tone(440, ctx.currentTime, .25, { type: 'square', vol: .25 }),
+    go:    () => ctx && tone(880, ctx.currentTime, .6, { type: 'square', vol: .3 }),
+    tick:  () => ctx && tone(1200, ctx.currentTime, .07, { type: 'sine', vol: .35 }),
+    place: () => { if (!ctx) return; const t = ctx.currentTime; tone(988, t, .12, { vol: .25 }); tone(1319, t + .12, .2, { vol: .25 }); },
+    hold:  () => ctx && tone(660, ctx.currentTime, .35, { type: 'sawtooth', vol: .25, filter: 2000 }),
+    point: () => { if (!ctx) return; const t = ctx.currentTime; [1047, 1319, 1568].forEach((f, i) => tone(f, t + i * .07, .25, { type: 'triangle', vol: .3 })); },
+    crash: () => { if (!ctx) return; const t = ctx.currentTime; tone(600, t, .9, { type: 'sawtooth', vol: .35, slideTo: 60, filter: 1500 }); noise(t, .8, { vol: .5, hp: 200, dest: sfxGain }); },
+    finish:() => { if (!ctx) return; const t = ctx.currentTime; [784, 988, 1175, 1568].forEach((f, i) => tone(f, t + i * .12, .4, { type: 'square', vol: .2, filter: 4000 })); }
+  };
+
+  /* ---------- Wake lock ---------- */
+  let wake = null;
+  async function keepAwake() { try { wake = await navigator.wakeLock?.request('screen'); } catch (e) {} }
+  function releaseAwake() { try { wake?.release(); } catch (e) {} wake = null; }
+
+  /* ---------- Flow ---------- */
+  function setLights(n, cls = 'on') { lights.forEach((l, i) => { l.classList.toggle('on', cls === 'on' && i < n); l.classList.toggle('go', cls === 'go'); }); }
+
+  function startLights() {
+    initAudio(); keepAwake();
+    S.mode = 'lights'; S.count = 0; S.litShown = 0;
+    S.lightsStart = performance.now();
+    S.lightsOutAt = S.lightsStart + 5000 + 400 + Math.random() * 1200;
+    renderCount(); refreshButtons();
+  }
+  function startPhase(p, t) {
+    S.phase = p; S.phaseStart = t; S.phaseDur = p === 'place' ? placeSec() : holdSec();
+    S.lastTick = Math.ceil(S.phaseDur);
+    if (p === 'place') sfx.place(); else sfx.hold();
+  }
+  function pause() {
+    S.remain = S.phaseDur - (performance.now() - S.phaseStart) / 1000;
+    S.mode = 'paused'; ctx && ctx.suspend(); refreshButtons();
+  }
+  function resume() {
+    S.phaseStart = performance.now() - (S.phaseDur - S.remain) * 1000;
+    S.mode = 'run'; ctx && ctx.resume(); refreshButtons();
+  }
+  function crash() {
+    if (!['run', 'paused', 'lights'].includes(S.mode)) return;
+    ctx && ctx.resume();
+    S.mode = 'done'; stopBgm(); sfx.crash(); setTimeout(sfx.finish, 900);
+    setLights(5, 'on');
+    if (S.count > S.best) S.best = S.count;
+    $('best').textContent = S.best + ' 本';
+    $('resultNum').innerHTML = S.count + '<small>本</small>';
+    $('result').hidden = false; $('again').focus();
+    releaseAwake(); refreshButtons();
+  }
+  function reset() {
+    stopBgm(); ctx && ctx.resume();
+    S.mode = 'idle'; S.phase = 'place'; S.count = 0;
+    $('result').hidden = true; setLights(0); renderCount(); refreshButtons(); releaseAwake();
+  }
+
+  /* ---------- Render ---------- */
+  function renderCount(added) {
+    $('num').innerHTML = S.count + '<small>本</small>';
+    const box = $('bats'), shown = Math.min(S.count, 60);
+    while (box.children.length > shown) box.lastChild.remove();
+    while (box.children.length < shown) { const b = document.createElement('span'); b.className = 'bat' + (added ? ' new' : ''); box.appendChild(b); }
+    $('lap').innerHTML = 'LAP <b>' + (S.count + 1) + '</b> 本目の電池';
+  }
+  function refreshButtons() {
+    const m = S.mode;
+    $('start').textContent = m === 'run' ? '一時停止' : m === 'paused' ? '再開' : 'スタート';
+    $('start').disabled = m === 'lights' || m === 'done';
+    $('crash').disabled = !(m === 'run' || m === 'paused' || m === 'lights');
+    $('placeSec').disabled = $('holdSec').disabled = m !== 'idle';
+  }
+  function show(phaseKey, label, remain, dur, next) {
+    $('clock').style.setProperty('--phase', COLORS[phaseKey]);
+    $('phase').textContent = label;
+    const r = Math.max(0, remain);
+    $('time').innerHTML = r.toFixed(1) + '<small>s</small>';
+    $('bar').style.width = (dur ? (1 - r / dur) * 100 : 0) + '%';
+    $('next').textContent = next;
+  }
+
+  function frame(now) {
+    if (S.mode === 'lights') {
+      const el = (now - S.lightsStart) / 1000;
+      const lit = Math.min(5, Math.floor(el) + 1);
+      if (lit !== S.litShown) { S.litShown = lit; setLights(lit); sfx.light(); }
+      show('done', 'シグナル点灯…', placeSec(), 0, '全部消えたらスタート！');
+      if (now >= S.lightsOutAt) {
+        setLights(0, 'go'); sfx.go(); setTimeout(() => S.mode !== 'idle' && setLights(0), 700);
+        S.mode = 'run'; startBgm(); startPhase('place', now); refreshButtons();
+      }
+    } else if (S.mode === 'run') {
+      let remain = S.phaseDur - (now - S.phaseStart) / 1000;
+      const sec = Math.ceil(remain);
+      if (sec < S.lastTick && sec >= 1 && sec <= 3) sfx.tick();
+      S.lastTick = sec;
+      if (remain <= 0) {
+        const t = S.phaseStart + S.phaseDur * 1000;
+        if (S.phase === 'place') startPhase('hold', t);
+        else { S.count++; renderCount(true); sfx.point(); startPhase('place', t); }
+        remain = S.phaseDur - (now - S.phaseStart) / 1000;
+      }
+      paintPhase(remain);
+    } else if (S.mode === 'paused') {
+      paintPhase(S.remain, '一時停止中 — Space で再開');
+    } else if (S.mode === 'idle') {
+      show('idle', 'スタンバイ', placeSec(), 0, 'スタートでシグナルが点灯し、消えたら開始します');
+    } else if (S.mode === 'done') {
+      show('done', 'フィニッシュ', 0, 0, '記録 ' + S.count + ' 本');
+    }
+    requestAnimationFrame(frame);
+  }
+  function paintPhase(remain, note) {
+    if (S.phase === 'place') show('place', '電池を入れる', remain, S.phaseDur, note || '次：橋が ' + holdSec() + ' 秒耐える');
+    else show('hold', '耐える！', remain, S.phaseDur, note || '耐えきれば ' + (S.count + 1) + ' 本目クリア');
+  }
+
+  /* ---------- Controls ---------- */
+  function primary() {
+    if (S.mode === 'idle') startLights();
+    else if (S.mode === 'run') pause();
+    else if (S.mode === 'paused') resume();
+  }
+  $('start').onclick = primary;
+  $('crash').onclick = crash;
+  $('reset').onclick = reset;
+  $('again').onclick = reset;
+  $('plus').onclick = () => { S.count++; renderCount(true); };
+  $('minus').onclick = () => { S.count = Math.max(0, S.count - 1); renderCount(); };
+  $('vol').oninput = () => { if (master) master.gain.value = $('vol').value / 100; };
+  $('bgmOn').onchange = () => { if (!$('bgmOn').checked) stopBgm(); else if (ctx && S.mode === 'run') startBgm(); };
+
+  document.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT' && e.target.type === 'number') return;
+    if (e.code === 'Space') { e.preventDefault(); if (!$('result').hidden) return; primary(); }
+    else if (e.key === 'Enter') { if (!$('result').hidden) return; e.preventDefault(); crash(); }
+    else if (e.key === 'r' || e.key === 'R') reset();
+    else if (e.key === 'm' || e.key === 'M') { $('bgmOn').checked = !$('bgmOn').checked; $('bgmOn').onchange(); }
+  });
+
+  renderCount(); refreshButtons(); requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
